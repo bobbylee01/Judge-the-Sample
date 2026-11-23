@@ -1,15 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import csv from '../data/clinic_visits.csv?raw';
+import clinicCsvUrl from '../data/clinic_visits.csv?url&no-inline';
 import Experiments from './Experiments.jsx';
 import Challenge from './Challenge.jsx';
 import { makeChallengePopulation, meanWait, parseClinicVisits, sampleWithoutReplacement, sampleSystematic, sampleStratified } from './sampling.js';
 import './style.css';
 
-const population = parseClinicVisits(csv);
-const modifiedPopulation = makeChallengePopulation(population);
-const populationMean = meanWait(population);
-const visitTypeCount = new Set(population.map(row => row.visitType)).size;
 const maxSeed = 2 ** 32 - 1;
 const emptySample = [];
 const methodDescriptions = {
@@ -17,13 +13,12 @@ const methodDescriptions = {
   systematic: 'Choose a random start and step through appointments in chronological order, from week to weekday to slot. In an unordered list, the same interval would step through list positions without following a time sequence.',
   stratified: 'Allocate the sample in proportion to visit type, rounding to whole rows and giving each type at least one. Draw randomly without replacement within each type. Weight each group’s sample mean by its share of the population.',
 };
-const yMax = Math.ceil(Math.max(...population.map(row => row.waitTime)) / 10) * 10;
 
 function newSeed() {
   return crypto.getRandomValues(new Uint32Array(1))[0];
 }
 
-function ScatterPlot({ sample }) {
+function ScatterPlot({ sample, population, populationMean, yMax }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -102,7 +97,7 @@ function ScatterPlot({ sample }) {
     const observer = new ResizeObserver(draw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [sample]);
+  }, [sample, population, populationMean, yMax]);
 
   return (
     <canvas ref={canvasRef} role="img"
@@ -110,7 +105,7 @@ function ScatterPlot({ sample }) {
   );
 }
 
-function App() {
+function App({ population, modifiedPopulation, populationMean, visitTypeCount, yMax }) {
   const [method, setMethod] = useState('random');
   const [sizeInput, setSizeInput] = useState('100');
   const [seedInput, setSeedInput] = useState(() => String(newSeed()));
@@ -191,7 +186,7 @@ function App() {
         </table>
       )}
       <figure>
-        <ScatterPlot sample={sample} />
+        <ScatterPlot sample={sample} population={population} populationMean={populationMean} yMax={yMax} />
         <figcaption>
           <span><i className="population" /> All appointments</span>
           <span><i className="sample" /> Selected appointments ({sample.length.toLocaleString()})</span>
@@ -208,4 +203,26 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+async function startApp() {
+  const root = createRoot(document.getElementById('root'));
+  root.render(<main role="status">Loading clinic visits…</main>);
+
+  try {
+    const response = await fetch(clinicCsvUrl);
+    if (!response.ok) throw new Error(`Clinic CSV request failed (${response.status})`);
+
+    const population = parseClinicVisits(await response.text());
+    root.render(<App
+      population={population}
+      modifiedPopulation={makeChallengePopulation(population)}
+      populationMean={meanWait(population)}
+      visitTypeCount={new Set(population.map(row => row.visitType)).size}
+      yMax={Math.ceil(Math.max(...population.map(row => row.waitTime)) / 10) * 10}
+    />);
+  } catch (error) {
+    console.error(error);
+    root.render(<main role="alert">Could not load clinic visits. Reload the page to try again.</main>);
+  }
+}
+
+startApp();
